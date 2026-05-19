@@ -5,6 +5,7 @@ from datetime import date
 
 app=FastAPI()
 
+#schema to tell fastapi what comes in as JSON payload
 class ExpenseCreate(BaseModel):
     title: str
     amount: float
