@@ -1,7 +1,11 @@
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,Depends
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from database import get_db
+from models import Expense
 
 app=FastAPI()
 
@@ -14,15 +18,14 @@ class ExpenseCreate(BaseModel):
     description: Optional[str] = None
 
 class ExpenseResponse(BaseModel):
-    id: int
+    id: str
     title: str
     amount: float
     category: str
     date: date
     description: Optional[str] = None
-
-expenses=[]
-next_id=1
+    class Config:
+        from_attributes = True
 
 
 @app.get("/")
@@ -30,36 +33,44 @@ async def hello():
     return "Hello World!"
 
 @app.post("/expenses", response_model=ExpenseResponse, status_code=201)
-def create_expense(expense: ExpenseCreate):
-    global next_id
-    new_expense = ExpenseResponse(id=next_id, **expense.model_dump())
-    expenses.append(new_expense)
-    next_id += 1
+async def create_expense(expense: ExpenseCreate, db: AsyncSession=Depends(get_db)):
+    new_expense=Expense(**expense.model_dump())
+    db.add(new_expense)
+    await db.commit()
+    await db.refresh(new_expense)
     return new_expense
 
 @app.get("/expenses", response_model=list[ExpenseResponse])
-def get_expenses():
-    return expenses
+async def get_expenses(db:AsyncSession=Depends(get_db)):
+    result=await db.execute(select(Expense))
+    return result.scalars().all()
 
 @app.get("/expenses/{expense_id}", response_model=ExpenseResponse)
-def get_expense(expense_id: int):
-    for expense in expenses:
-        if expense.id == expense_id:
-            return expense
-    raise HTTPException(status_code=404, detail="Expense not found")
+async def get_expense(expense_id: str,db: AsyncSession=Depends(get_db)):
+    result=await db.execute(select(Expense).where(Expense.id==expense_id))
+    expense=result.scalar_one_or_none()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return expense
 
-@app.patch("/expenses/{expense_id}", response_model=ExpenseResponse)
-def update_expense(expense_id: int, updated: ExpenseCreate):
-    for index, expense in enumerate(expenses):
-        if expense.id == expense_id:
-            expenses[index] = ExpenseResponse(id=expense_id, **updated.model_dump())
-            return expenses[index]
-    raise HTTPException(status_code=404, detail="Expense not found")
 
 @app.delete("/expenses/{expense_id}", status_code=204)
-def delete_expense(expense_id: int):
-    for index, expense in enumerate(expenses):
-        if expense.id == expense_id:
-            expenses.pop(index)
-            return
-    raise HTTPException(status_code=404, detail="Expense not found")
+async def delete_expense(expense_id: str,db:AsyncSession=Depends(get_db)):
+    result=await db.execute(select(Expense).where(Expense.id==expense_id))
+    expense=result.scalar_one_or_none()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    db.delete(expense)
+    await db.commit()
+
+@app.patch("/expenses/{expense_id}", response_model=ExpenseResponse)
+async def update(expense_id:str,updated:ExpenseCreate,db:AsyncSession=Depends(get_db)):
+    result=await db.execute(select(Expense).where(Expense.id==expense_id))
+    expense=result.scalar_one_or_none()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    for key,value in updated.model_dump().items():
+        setattr(expense,key,value)
+    await db.commit()
+    await db.refresh(expense)
+    return expense
