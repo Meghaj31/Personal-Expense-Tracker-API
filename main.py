@@ -6,11 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from database import get_db
 from models import Expense
+from uuid import UUID
 
 app=FastAPI()
 
 #schema to tell fastapi what comes in as JSON payload
 class ExpenseCreate(BaseModel):
+    user_id: UUID
     title: str
     amount: float
     category: str
@@ -18,7 +20,7 @@ class ExpenseCreate(BaseModel):
     description: Optional[str] = None
 
 class ExpenseResponse(BaseModel):
-    id: str
+    id: UUID
     title: str
     amount: float
     category: str
@@ -60,7 +62,7 @@ async def delete_expense(expense_id: str,db:AsyncSession=Depends(get_db)):
     expense=result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Expense not found")
-    db.delete(expense)
+    await db.delete(expense)
     await db.commit()
 
 @app.patch("/expenses/{expense_id}", response_model=ExpenseResponse)
